@@ -1,5 +1,5 @@
 # api-gateway/main.py
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, HTTPException, Request
 from prometheus_fastapi_instrumentator import Instrumentator
 import httpx, os, time
 
@@ -12,16 +12,24 @@ QDRANT_URL = os.environ.get("QDRANT_URL", "http://qdrant:6333")
 @app.post("/api/v1/chat")
 async def chat(request: Request):
     body = await request.json()
-    query = body["query"]
+    query = body.get("query")
+    if not query:
+        raise HTTPException(status_code=422, detail="Missing required field: query")
+
     start = time.time()
 
     # 1. Vector search
-    async with httpx.AsyncClient() as client:
-        search_resp = await client.post(f"{QDRANT_URL}/collections/documents/points/search", json={
-            "vector": body.get("embedding", [0.0] * 384),
-            "limit": 3
-        })
-        context = search_resp.json().get("result", [])
+    context = []
+    async with httpx.AsyncClient(timeout=10) as client:
+        try:
+            search_resp = await client.post(f"{QDRANT_URL}/collections/documents/points/search", json={
+                "vector": body.get("embedding", [0.0] * 384),
+                "limit": 3
+            })
+            if search_resp.status_code < 400:
+                context = search_resp.json().get("result", [])
+        except httpx.HTTPError:
+            context = []
 
     # 2. LLM inference
     prompt = f"Context: {context}\n\nQuery: {query}"
@@ -30,6 +38,7 @@ async def chat(request: Request):
             "model": "Qwen/Qwen2.5-7B-Instruct-GPTQ-Int4",
             "messages": [{"role": "user", "content": prompt}]
         })
+        llm_resp.raise_for_status()
 
     latency = (time.time() - start) * 1000
     result = llm_resp.json()

@@ -1,16 +1,28 @@
 # prefect/flows/kafka_to_delta.py
-from prefect import flow, task
+try:
+    from prefect import flow, task
+except ModuleNotFoundError:
+    def flow(*_args, **_kwargs):
+        def decorator(fn):
+            return fn
+        return decorator
+
+    def task(fn):
+        return fn
 from kafka import KafkaConsumer
 import json, os
 import pandas as pd
 from datetime import datetime
+
+KAFKA_BOOTSTRAP_SERVERS = os.environ.get("KAFKA_BOOTSTRAP_SERVERS", "localhost:9092")
+DELTA_LAKE_PATH = os.environ.get("DELTA_LAKE_PATH", "delta-lake/raw")
 
 @task
 def consume_and_process():
     """Consume data from Kafka topic"""
     consumer = KafkaConsumer(
         "data.raw",
-        bootstrap_servers="kafka:9092",
+        bootstrap_servers=KAFKA_BOOTSTRAP_SERVERS,
         auto_offset_reset="earliest",
         consumer_timeout_ms=5000,
         value_deserializer=lambda m: json.loads(m.decode())
@@ -31,7 +43,7 @@ def save_to_delta(records):
     
     df = pd.DataFrame(records)
     # Giả lập Delta Lake bằng parquet (local volume)
-    path = "/opt/delta-lake/raw"
+    path = DELTA_LAKE_PATH
     os.makedirs(path, exist_ok=True)
     df.to_parquet(f"{path}/batch_{datetime.now().strftime('%Y%m%d_%H%M%S')}.parquet")
     print(f"Saved {len(df)} records to Delta Lake")
@@ -43,8 +55,10 @@ def kafka_to_delta_flow():
     save_to_delta(records)
 
 if __name__ == "__main__":
-    # Deploy flow to Prefect Orion
-    kafka_to_delta_flow.deploy(
-        name="kafka-to-delta",
-        work_queue_name="lab28-worker"
-    )
+    if os.environ.get("PREFECT_DEPLOY_FLOW") == "1":
+        kafka_to_delta_flow.deploy(
+            name="kafka-to-delta",
+            work_queue_name="lab28-worker"
+        )
+    else:
+        kafka_to_delta_flow()

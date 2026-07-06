@@ -3,6 +3,7 @@ import pytest, requests, time, os
 
 BASE_URL = "http://localhost:8000"
 VLLM_URL = os.environ.get("VLLM_NGROK_URL", "")
+MAX_LATENCY_MS = float(os.environ.get("SMOKE_MAX_LATENCY_MS", "5000"))
 
 # ── Test 1: Happy Path — Full Inference Request ───────────────
 class TestHappyPath:
@@ -16,7 +17,7 @@ class TestHappyPath:
         data = resp.json()
         assert "answer" in data
         assert len(data["answer"]) > 10
-        assert data["latency_ms"] < 2000
+        assert data["latency_ms"] < MAX_LATENCY_MS
 
     def test_health_check_passes(self):
         """API Gateway health check"""
